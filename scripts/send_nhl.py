@@ -128,6 +128,8 @@ for p in players:
     if not stats:
         print(f"    Skipped (parse failed)")
         continue
+    if not stats.get('Team'):
+        stats['Team'] = p.get('team', '')
     rows.append({'Player': name, 'Jersey': f"#{jersey}" if jersey else '', **stats, 'As Of': today})
     time.sleep(0.15)
 
