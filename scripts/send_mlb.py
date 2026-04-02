@@ -74,6 +74,15 @@ def parse_gamelog(data):
         ab_drought += g['ab']
 
     avg = round(total_h / total_ab, 3) if total_ab else 0.0
+
+    # Extract team from multiple possible locations in ESPN response
+    season_types = data.get('seasonTypes') or []
+    team = ''
+    if season_types:
+        team = season_types[0].get('displayTeam', '')
+    if not team:
+        team = (data.get('athlete') or {}).get('team', {}).get('abbreviation', '')
+
     return {
         'G': len(games),
         'AB': total_ab,
@@ -82,6 +91,7 @@ def parse_gamelog(data):
         'HR': total_hr,
         'G Drought': g_drought,
         'AB Drought': ab_drought,
+        'Team': team,
     }
 
 # ── Fetch stats ───────────────────────────────────────────────────────────────
@@ -103,13 +113,16 @@ for p in players:
     if not stats:
         print(f"    Skipped (parse failed)")
         continue
+    # Use team from Firebase entry as fallback if ESPN didn't return one
+    if not stats.get('Team'):
+        stats['Team'] = p.get('team', '')
     rows.append({'Player': name, **stats, 'As Of': today})
     time.sleep(0.15)
 
 print(f"Got stats for {len(rows)} players")
 
 # ── Build CSV ─────────────────────────────────────────────────────────────────
-fieldnames = ['Player', 'G', 'AB', 'H', 'AVG', 'HR', 'G Drought', 'AB Drought', 'As Of']
+fieldnames = ['Player', 'Team', 'G', 'AB', 'H', 'AVG', 'HR', 'G Drought', 'AB Drought', 'As Of']
 buf = io.StringIO()
 writer = csv.DictWriter(buf, fieldnames=fieldnames)
 writer.writeheader()
