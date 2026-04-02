@@ -1,0 +1,50 @@
+name: Daily Sports Emails
+
+on:
+  schedule:
+    # 8:00 AM ET = 12:00 PM UTC (13:00 UTC during EDT)
+    - cron: '0 12 * * *'
+  workflow_dispatch: # allows manual trigger from GitHub
+
+jobs:
+  send-mlb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests firebase-admin
+
+      - name: Send MLB email
+        env:
+          FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+        run: python scripts/send_mlb.py
+
+  send-nhl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests firebase-admin
+
+      - name: Send NHL email
+        env:
+          FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+        run: python scripts/send_nhl.py
