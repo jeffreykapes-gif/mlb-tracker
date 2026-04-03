@@ -277,28 +277,59 @@ rows.sort(key=lambda r: r.get('G Drought', 0), reverse=True)
 writer.writerows(rows)
 csv_bytes = buf.getvalue().encode('utf-8')
 
-# ── Build email body ──────────────────────────────────────────────────────────
-lines = [f"🏒 NHL Stats — {today}", f"{len(rows)} players tracked. CSV attached, sorted by G Drought.", ""]
+# ── Build HTML email body ────────────────────────────────────────────────────
+tracked_names = set(p.get('name', '').lower() for p in players)
+
+def fmt_goal(line, tracked):
+    """Bold the line if it contains a tracked player name."""
+    line_lower = line.lower()
+    for name in tracked:
+        if name and name in line_lower:
+            return f"<li><strong>{line.strip()}</strong></li>"
+    return f"<li>{line.strip()}</li>"
+
+html_parts = []
+html_parts.append("""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  body { font-family: -apple-system, Arial, sans-serif; font-size: 14px; color: #1a1a1a; max-width: 700px; margin: 0 auto; padding: 20px; }
+  h1 { font-size: 22px; color: #1a1a1a; margin-bottom: 4px; }
+  h2 { font-size: 16px; color: #333; border-bottom: 2px solid #e5e5e3; padding-bottom: 6px; margin-top: 28px; }
+  .subtitle { color: #777; font-size: 13px; margin-bottom: 20px; }
+  .recap { background: #f8f9fa; border-left: 4px solid #3b82f6; padding: 12px 16px; border-radius: 4px; margin: 16px 0; font-style: italic; }
+  .game { margin-bottom: 20px; }
+  .score { font-weight: bold; font-size: 15px; color: #1a1a1a; margin-bottom: 6px; }
+  ul { margin: 4px 0 0 20px; padding: 0; }
+  li { margin: 3px 0; color: #444; }
+  .no-events { color: #999; font-style: italic; margin-left: 20px; font-size: 13px; }
+</style></head><body>""")
+
+html_parts.append(f"<h1>🏒 NHL Stats — {today}</h1>")
+html_parts.append(f'<p class="subtitle">{len(rows)} players tracked &bull; CSV attached, sorted by G Drought</p>')
 
 if ai_summary:
-    lines += ["📰 Yesterday's Recap", "─" * 40, ai_summary, ""]
+    html_parts.append('<h2>📰 Yesterday's Recap</h2>')
+    html_parts.append(f'<div class="recap">{ai_summary}</div>')
 
 if games_data:
-    lines += [f"📊 Final Scores & Goal Scorers — {yesterday_display}", "═" * 50]
+    html_parts.append(f'<h2>📊 Final Scores & Goal Scorers — {yesterday_display}</h2>')
     for g in games_data:
-        lines.append(f"🔴 {g['score_line']}")
+        html_parts.append('<div class="game">')
+        html_parts.append(f'<div class="score">🔴 {g["score_line"]}</div>')
         if g['goals']:
-            lines += g['goals']
+            html_parts.append('<ul>')
+            for goal in g['goals']:
+                html_parts.append(fmt_goal(goal, tracked_names))
+            html_parts.append('</ul>')
         else:
-            lines.append("   No scoring play data available")
-        lines.append("─" * 50)
-        lines.append("")
+            html_parts.append('<p class="no-events">No scoring play data</p>')
+        html_parts.append('</div>')
 else:
-    lines += [f"No completed games found for {yesterday_display}.", ""]
+    html_parts.append(f'<p>No completed games found for {yesterday_display}.</p>')
 
-email_body = '\n'.join(lines)
-print(f"Email body length: {len(email_body)} chars")
-print(f"First 300 chars:\n{email_body[:300]}")
+html_parts.append('</body></html>')
+email_body = '\n'.join(html_parts)
+print(f"HTML email body length: {len(email_body)} chars")
 
 # ── Send email ────────────────────────────────────────────────────────────────
 GMAIL_USER = os.environ['GMAIL_USER']
@@ -309,7 +340,7 @@ msg = MIMEMultipart()
 msg['From']    = GMAIL_USER
 msg['To']      = TO_EMAIL
 msg['Subject'] = f"🏒 NHL Stats — {today}"
-msg.attach(MIMEText(email_body, 'plain'))
+msg.attach(MIMEText(email_body, 'html'))
 
 att = MIMEBase('application', 'octet-stream')
 att.set_payload(csv_bytes)
