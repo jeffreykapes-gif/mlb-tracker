@@ -51,8 +51,18 @@ for tid in range(1, 31):
     time.sleep(0.1)
 print(f"Roster index: {len(roster_index)} players")
 
+# Known ESPN IDs for players who may not appear in standard roster endpoint
+KNOWN_IDS = {
+    'shohei ohtani': ('39832', 'LAD'),
+}
+
 def get_player_meta(entry):
     key = entry.get('name', '').lower()
+    # Check known IDs first
+    if key in KNOWN_IDS:
+        known_id, known_team = KNOWN_IDS[key]
+        print(f"  Using known ID for '{entry.get('name')}': {known_id} ({known_team})")
+        return known_id, known_team
     if key in roster_index:
         m = roster_index[key]
         return m['id'], m['team']
