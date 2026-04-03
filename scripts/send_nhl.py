@@ -153,18 +153,61 @@ if scores_data:
             game_goals = []
             event_id   = event.get('id')
             if event_id:
+                # Try ESPN summary first
                 box = fetch(f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={event_id}")
                 if box:
-                    for play in (box.get('scoringPlays') or []):
-                        text     = play.get('text', '')
+                    print(f"    ESPN summary keys: {list(box.keys())}")
+                    scoring = box.get('scoringPlays') or box.get('scoring') or []
+                    for play in scoring:
+                        text      = play.get('text', '') or play.get('description', '')
                         team_abbr = play.get('team', {}).get('abbreviation', '')
-                        period   = play.get('period', {}).get('displayValue', '')
-                        clock    = play.get('clock', {}).get('displayValue', '')
+                        period    = play.get('period', {}).get('displayValue', '') or str(play.get('period', ''))
+                        clock     = play.get('clock', {}).get('displayValue', '') or play.get('clock', '')
                         if text:
                             goal_line = f"  🥅 {team_abbr} — {text} ({period}, {clock})"
                             game_goals.append(goal_line)
                             all_goals.append(f"{team_abbr} — {text} ({period}, {clock})")
-                    print(f"    Found {len(game_goals)} goals")
+
+                # If ESPN returned nothing, try official NHL API
+                if not game_goals:
+                    # Get NHL game ID from ESPN event - need to find it via schedule
+                    nhl_date = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
+                    nhl_sched = fetch(f"https://api-web.nhle.com/v1/score/{nhl_date}")
+                    if nhl_sched:
+                        away_abbr = away.get('team', {}).get('abbreviation', '')
+                        home_abbr = home.get('team', {}).get('abbreviation', '')
+                        for g in (nhl_sched.get('games') or []):
+                            g_away = g.get('awayTeam', {}).get('abbrev', '')
+                            g_home = g.get('homeTeam', {}).get('abbrev', '')
+                            if g_away == away_abbr and g_home == home_abbr:
+                                nhl_game_id = g.get('id')
+                                pbp = fetch(f"https://api-web.nhle.com/v1/gamecenter/{nhl_game_id}/play-by-play")
+                                if pbp:
+                                    for play in (pbp.get('plays') or []):
+                                        if play.get('typeDescKey') == 'goal':
+                                            details   = play.get('details', {})
+                                            scorer_id = details.get('scoringPlayerId')
+                                            team_id   = details.get('eventOwnerTeamId')
+                                            period    = play.get('periodDescriptor', {}).get('number', '')
+                                            time_str  = play.get('timeInPeriod', '')
+                                            # Get scorer name from roster
+                                            scorer_name = str(scorer_id)
+                                            for p_entry in (pbp.get('rosterSpots') or []):
+                                                if p_entry.get('playerId') == scorer_id:
+                                                    scorer_name = f"{p_entry.get('firstName',{}).get('default','')} {p_entry.get('lastName',{}).get('default','')}".strip()
+                                                    break
+                                            # Get team abbrev
+                                            t_abbr = ''
+                                            for t in [pbp.get('homeTeam',{}), pbp.get('awayTeam',{})]:
+                                                if t.get('id') == team_id:
+                                                    t_abbr = t.get('abbrev', '')
+                                                    break
+                                            goal_line = f"  🥅 {t_abbr} — {scorer_name} (P{period}, {time_str})"
+                                            game_goals.append(goal_line)
+                                            all_goals.append(f"{t_abbr} — {scorer_name} (P{period}, {time_str})")
+                                break
+
+                print(f"    Found {len(game_goals)} goals")
                 time.sleep(0.15)
 
             games_data.append({'score_line': score_line, 'goals': game_goals})
@@ -232,10 +275,14 @@ if ai_summary:
     lines += ["📰 Yesterday's Recap", "─" * 40, ai_summary, ""]
 
 if games_data:
-    lines += [f"📊 Final Scores & Goal Scorers — {yesterday_display}", "─" * 40]
+    lines += [f"📊 Final Scores & Goal Scorers — {yesterday_display}", "═" * 50]
     for g in games_data:
-        lines.append(g['score_line'])
-        lines += g['goals'] if g['goals'] else ["  No scoring play data"]
+        lines.append(f"🔴 {g['score_line']}")
+        if g['goals']:
+            lines += g['goals']
+        else:
+            lines.append("   No scoring play data available")
+        lines.append("─" * 50)
         lines.append("")
 else:
     lines += [f"No completed games found for {yesterday_display}.", ""]
