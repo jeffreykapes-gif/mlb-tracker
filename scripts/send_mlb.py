@@ -211,13 +211,17 @@ for p in players:
     name = p.get('name', 'Unknown')
     pid, team = get_player_meta(p)
     if not pid:
+        print(f"  SKIP {name}: no ID")
         continue
     url  = f"https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/{pid}/gamelog?season={SEASON}"
     data = fetch(url)
     if not data:
+        print(f"  SKIP {name}: no data from API (ID:{pid})")
         continue
     stats = parse_gamelog(data, team_fallback=team)
     if not stats:
+        names_returned = [str(n) for n in (data.get('names') or [])]
+        print(f"  SKIP {name}: parse failed. Columns: {names_returned}")
         continue
     if not stats.get('Team'):
         stats['Team'] = team
