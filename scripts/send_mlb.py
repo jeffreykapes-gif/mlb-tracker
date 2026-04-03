@@ -138,39 +138,59 @@ print(f"Total final games found: {len(games_data)}")
 
 # ── Home runs via MLB Stats API ───────────────────────────────────────────────
 print(f"Fetching home runs from MLB Stats API for {yesterday_iso}...")
-schedule = fetch(f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={yesterday_iso}")
-print(f"MLB Stats API schedule: {'OK - ' + str(len((schedule.get('dates') or [{}])[0].get('games', []))) + ' games' if schedule else 'FAILED'}")
+schedule = fetch(f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={yesterday_iso}&hydrate=linescore")
+if schedule:
+    dates = schedule.get('dates') or []
+    games_today = dates[0].get('games', []) if dates else []
+    print(f"MLB Stats API: OK - {len(games_today)} games")
+else:
+    print("MLB Stats API: FAILED - None returned")
 
 all_homers = []
 if schedule:
+    # Build list of final games from MLB Stats API in order
+    mlb_final_games = []
     for date_entry in (schedule.get('dates') or []):
         for game in (date_entry.get('games') or []):
-            game_pk = game.get('gamePk')
-            status  = game.get('status', {}).get('detailedState', '')
-            away_abbr = game.get('teams', {}).get('away', {}).get('team', {}).get('abbreviation', '')
-            home_abbr = game.get('teams', {}).get('home', {}).get('team', {}).get('abbreviation', '')
-            print(f"  MLB game {game_pk}: {away_abbr} @ {home_abbr} | {status}")
-            if 'Final' not in status:
-                continue
-            pbp = fetch(f"https://statsapi.mlb.com/api/v1/game/{game_pk}/playByPlay")
-            if not pbp:
-                print(f"    No PBP data")
-                continue
-            game_homers = []
-            for play in (pbp.get('allPlays') or []):
-                if play.get('result', {}).get('eventType') == 'home_run':
-                    batter = play.get('matchup', {}).get('batter', {}).get('fullName', 'Unknown')
-                    team   = play.get('offense', {}).get('team', {}).get('abbreviation', '')
-                    desc   = play.get('result', {}).get('description', '')
-                    game_homers.append(f"  💥 {batter} ({team}) — {desc}")
-                    all_homers.append(f"{batter} ({team}) — {desc}")
-            print(f"    Found {len(game_homers)} HRs")
-            # Match to games_data
-            for g in games_data:
-                if g['away'] == away_abbr or g['home'] == home_abbr:
-                    g['homers'] = game_homers
-                    break
-            time.sleep(0.1)
+            status = game.get('status', {}).get('detailedState', '')
+            if 'Final' in status:
+                mlb_final_games.append(game)
+
+    print(f"  MLB Stats API final games: {len(mlb_final_games)} | ESPN final games: {len(games_data)}")
+
+    for game in mlb_final_games:
+        game_pk   = game.get('gamePk')
+        away_team = game.get('teams', {}).get('away', {}).get('team', {})
+        home_team = game.get('teams', {}).get('home', {}).get('team', {})
+        away_name = away_team.get('name', '')
+        home_name = home_team.get('name', '')
+        away_abbr = away_team.get('abbreviation', '')
+        home_abbr = home_team.get('abbreviation', '')
+        print(f"  MLB game {game_pk}: {away_name}({away_abbr}) @ {home_name}({home_abbr})")
+        pbp = fetch(f"https://statsapi.mlb.com/api/v1/game/{game_pk}/playByPlay")
+        if not pbp:
+            print(f"    No PBP data")
+            continue
+        game_homers = []
+        for play in (pbp.get('allPlays') or []):
+            if play.get('result', {}).get('eventType') == 'home_run':
+                batter = play.get('matchup', {}).get('batter', {}).get('fullName', 'Unknown')
+                team   = play.get('offense', {}).get('team', {}).get('abbreviation', '')
+                desc   = play.get('result', {}).get('description', '')
+                game_homers.append(f"   💥 {batter} ({team}) — {desc}")
+                all_homers.append(f"{batter} ({team}) — {desc}")
+        print(f"    Found {len(game_homers)} HRs")
+        # Match to games_data by team name — more reliable than index
+        for g in games_data:
+            if away_abbr and away_abbr in g['score_line']:
+                g['homers'] = game_homers
+                print(f"    Matched to: {g['score_line']}")
+                break
+            elif away_name and away_name in g['score_line']:
+                g['homers'] = game_homers
+                print(f"    Matched to: {g['score_line']}")
+                break
+        time.sleep(0.1)
 
 print(f"Total home runs: {len(all_homers)}")
 
@@ -235,10 +255,14 @@ if ai_summary:
     lines += ["📰 Yesterday's Recap", "─" * 40, ai_summary, ""]
 
 if games_data:
-    lines += [f"📊 Final Scores & Home Runs — {yesterday_display}", "─" * 40]
+    lines += [f"📊 Final Scores & Home Runs — {yesterday_display}", "═" * 50]
     for g in games_data:
-        lines.append(g['score_line'])
-        lines += g['homers'] if g['homers'] else ["  No home runs"]
+        lines.append(f"🔴 {g['score_line']}")
+        if g['homers']:
+            lines += g['homers']
+        else:
+            lines.append("   No home runs")
+        lines.append("─" * 50)
         lines.append("")
 else:
     lines += [f"No completed games found for {yesterday_display}.", ""]
