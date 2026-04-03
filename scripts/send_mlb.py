@@ -36,11 +36,10 @@ def fetch(url, retries=3):
             time.sleep(2)
     return None
 
-# ── Build roster index (name -> id, team) ─────────────────────────────────────
+# ── Build roster index ────────────────────────────────────────────────────────
 print("Building MLB roster index...")
 roster_index = {}
-ALL_TEAM_IDS = list(range(1, 31))
-for tid in ALL_TEAM_IDS:
+for tid in range(1, 31):
     d = fetch(f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams/{tid}/roster?season={SEASON}")
     if not d:
         continue
@@ -49,22 +48,19 @@ for tid in ALL_TEAM_IDS:
         for p in (group.get('items') or []):
             if p.get('fullName') and p.get('id'):
                 roster_index[p['fullName'].lower()] = {
-                    'id': str(p['id']),
-                    'name': p['fullName'],
-                    'team': team_abbr
+                    'id': str(p['id']), 'name': p['fullName'], 'team': team_abbr
                 }
     time.sleep(0.1)
-print(f"Roster index built: {len(roster_index)} players")
+print(f"Roster index: {len(roster_index)} players")
 
 def get_player_meta(entry):
-    """Get fresh ID and team from roster index, fall back to Firebase entry."""
     key = entry.get('name', '').lower()
     if key in roster_index:
-        return roster_index[key]['id'], roster_index[key]['team']
-    # Try partial match
-    matches = [v for k, v in roster_index.items() if entry.get('name', '').lower() in k]
-    if matches:
-        return matches[0]['id'], matches[0]['team']
+        m = roster_index[key]
+        return m['id'], m['team']
+    for k, v in roster_index.items():
+        if entry.get('name', '').lower() in k:
+            return v['id'], v['team']
     return entry.get('id'), entry.get('team', '')
 
 def parse_gamelog(data, team_fallback=''):
@@ -74,7 +70,6 @@ def parse_gamelog(data, team_fallback=''):
     hr_idx = next((i for i, n in enumerate(names) if n == 'homeRuns'), -1)
     if ab_idx < 0 or h_idx < 0 or hr_idx < 0:
         return None
-
     events_meta = data.get('events', {})
     games = []
     for st in (data.get('seasonTypes') or []):
@@ -90,22 +85,18 @@ def parse_gamelog(data, team_fallback=''):
                     'h':  int(stats[h_idx]  or 0),
                     'hr': int(stats[hr_idx] or 0),
                 })
-
     games.sort(key=lambda g: g['date'])
     total_ab = sum(g['ab'] for g in games)
     total_h  = sum(g['h']  for g in games)
     total_hr = sum(g['hr'] for g in games)
-
     g_drought = ab_drought = 0
     for g in reversed(games):
         if g['hr'] > 0:
             break
         g_drought += 1
         ab_drought += g['ab']
-
     avg = round(total_h / total_ab, 3) if total_ab else 0.0
     team = (data.get('seasonTypes') or [{}])[0].get('displayTeam', '') or team_fallback
-
     return {
         'G': len(games), 'AB': total_ab, 'H': total_h,
         'AVG': f"{avg:.3f}".lstrip('0') or '.000',
@@ -113,15 +104,20 @@ def parse_gamelog(data, team_fallback=''):
         'AB Drought': ab_drought, 'Team': team,
     }
 
-# ── Yesterday's scores ────────────────────────────────────────────────────────
+# ── Yesterday's scores with full names and records ───────────────────────────
 yesterday     = (date.today() - timedelta(days=1)).strftime('%Y%m%d')
 yesterday_iso = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
 yesterday_display = (date.today() - timedelta(days=1)).strftime('%B %d, %Y')
 
-print(f"Fetching yesterday's MLB scores ({yesterday})...")
+print(f"Fetching scores for {yesterday}...")
 scores_data = fetch(f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={yesterday}")
 
 game_summaries = []
+game_ids = []
+
+# games_data stores each completed game with its score line and homers
+games_data = []  # list of {'score_line': str, 'homers': [str]}
+
 if scores_data:
     for event in (scores_data.get('events') or []):
         comps = event.get('competitions', [{}])[0]
@@ -131,43 +127,62 @@ if scores_data:
         home = next((c for c in competitors if c.get('homeAway') == 'home'), competitors[0])
         away = next((c for c in competitors if c.get('homeAway') == 'away'), competitors[1])
         status = event.get('status', {}).get('type', {}).get('description', '')
-        if 'final' in status.lower():
-            game_summaries.append(
-                f"{away.get('team',{}).get('abbreviation','?')} {away.get('score','?')}, "
-                f"{home.get('team',{}).get('abbreviation','?')} {home.get('score','?')}"
-            )
 
+        home_name  = home.get('team', {}).get('displayName', home.get('team', {}).get('abbreviation', '?'))
+        away_name  = away.get('team', {}).get('displayName', away.get('team', {}).get('abbreviation', '?'))
+        home_score = home.get('score', '?')
+        away_score = away.get('score', '?')
+
+        home_rec = home.get('records', [{}])[0].get('summary', '') if home.get('records') else ''
+        away_rec = away.get('records', [{}])[0].get('summary', '') if away.get('records') else ''
+        if home_rec: home_name = f"{home_name} ({home_rec})"
+        if away_rec: away_name = f"{away_name} ({away_rec})"
+
+        if 'final' in status.lower():
+            score_line = f"{away_name} {away_score}, {home_name} {home_score}"
+            game_ids.append(event.get('id'))
+            games_data.append({'score_line': score_line, 'homers': [], 'mlb_away': away.get('team',{}).get('abbreviation',''), 'mlb_home': home.get('team',{}).get('abbreviation','')})
+
+game_summaries = [g['score_line'] for g in games_data]
 print(f"Found {len(game_summaries)} completed games")
 
-# ── Yesterday's home runs via ESPN daily leaders ──────────────────────────────
-print("Fetching yesterday's HR leaders...")
+# ── Get home runs using MLB Stats API, grouped by game ───────────────────────
+print("Fetching home runs via MLB Stats API...")
 all_homers = []
-# ESPN daily stats leaders endpoint
-leaders_data = fetch(f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/stats/leaders?dates={yesterday_iso}&categories=batting")
-if not leaders_data:
-    leaders_data = fetch(f"https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/statistics/byathlete?region=us&lang=en&contentorigin=espn&isrequired=true&type=total&dates={yesterday_iso}&groups=50")
 
-# Alternative: pull from each game's box score plays
-if not all_homers and scores_data:
-    for event in (scores_data.get('events') or []):
-        event_id = event.get('id')
-        if not event_id:
-            continue
-        status = event.get('status', {}).get('type', {}).get('description', '')
-        if 'final' not in status.lower():
-            continue
-        box = fetch(f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary?event={event_id}")
-        if not box:
-            continue
-        # Check scoring plays for home runs
-        for play in (box.get('scoringPlays') or []):
-            text = play.get('text', '').lower()
-            if 'home run' in text or 'homer' in text or 'homers' in text:
-                team_abbr = play.get('team', {}).get('abbreviation', '')
-                all_homers.append(f"{play.get('text', '')} ({team_abbr})")
-        time.sleep(0.15)
+schedule = fetch(f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={yesterday_iso}&hydrate=decisions")
+if schedule:
+    for date_entry in (schedule.get('dates') or []):
+        for game in (date_entry.get('games') or []):
+            game_pk = game.get('gamePk')
+            status = game.get('status', {}).get('detailedState', '')
+            if not game_pk or 'Final' not in status:
+                continue
+            away_abbr = game.get('teams', {}).get('away', {}).get('team', {}).get('abbreviation', '')
+            home_abbr = game.get('teams', {}).get('home', {}).get('team', {}).get('abbreviation', '')
 
-print(f"Found {len(all_homers)} HR events")
+            pbp = fetch(f"https://statsapi.mlb.com/api/v1/game/{game_pk}/playByPlay")
+            if not pbp:
+                continue
+
+            game_homers = []
+            for play in (pbp.get('allPlays') or []):
+                result = play.get('result', {})
+                if result.get('eventType') == 'home_run':
+                    batter_name = play.get('matchup', {}).get('batter', {}).get('fullName', 'Unknown')
+                    team = play.get('offense', {}).get('team', {}).get('abbreviation', '')
+                    desc = result.get('description', '')
+                    game_homers.append(f"  💥 {batter_name} ({team}) — {desc}")
+                    all_homers.append(f"{batter_name} ({team}) — {desc}")
+
+            # Match to games_data entry
+            for g in games_data:
+                if g['mlb_away'] == away_abbr or g['mlb_home'] == home_abbr:
+                    g['homers'] = game_homers
+                    break
+            time.sleep(0.1)
+
+print(f"Found {len(all_homers)} home runs")
 
 # ── Fetch tracked player stats ────────────────────────────────────────────────
 today = date.today().isoformat()
@@ -179,46 +194,41 @@ for p in players:
     if not pid:
         print(f"  Skipping {name} (no ID)")
         continue
-    print(f"  Fetching {name} (ID:{pid}, Team:{team})...")
+    print(f"  Fetching {name}...")
     url = f"https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/{pid}/gamelog?season={SEASON}"
     data = fetch(url)
     if not data:
-        print(f"    No data returned")
         continue
     stats = parse_gamelog(data, team_fallback=team)
     if not stats:
-        print(f"    Parse failed")
         continue
     if not stats.get('Team'):
         stats['Team'] = team
     rows.append({'Player': name, **stats, 'As Of': today})
     time.sleep(0.15)
 
-print(f"Got stats for {len(rows)} / {len(players)} players")
+print(f"Got stats for {len(rows)} players")
 
 # ── AI Summary ────────────────────────────────────────────────────────────────
 AI_TOKEN = os.environ.get('AI_TOKEN', '')
 ai_summary = ''
 
-if AI_TOKEN:
+if AI_TOKEN and (game_summaries or all_homers):
     scores_text = '\n'.join(game_summaries) if game_summaries else 'No completed games.'
-    homers_text = '\n'.join(all_homers) if all_homers else 'No home run data available.'
+    homers_text = '\n'.join(all_homers[:20]) if all_homers else 'No home run data.'
 
-    prompt = f"""You are a baseball analyst. Write a short, engaging 3-4 sentence summary of yesterday's MLB action ({yesterday_display}). Mention notable scores, standout performances, and interesting storylines. Keep it conversational and exciting.
+    prompt = f"""You are a baseball analyst. Write a short, engaging 3-4 sentence summary of yesterday's MLB action ({yesterday_display}). Mention notable scores, standout home run hitters, and interesting storylines. Keep it conversational and exciting.
 
 Yesterday's Final Scores:
 {scores_text}
 
-Home Run Plays:
+Home Runs Hit:
 {homers_text}"""
 
     try:
         resp = requests.post(
             "https://models.inference.ai.azure.com/chat/completions",
-            headers={
-                "Authorization": f"Bearer {AI_TOKEN}",
-                "Content-Type": "application/json"
-            },
+            headers={"Authorization": f"Bearer {AI_TOKEN}", "Content-Type": "application/json"},
             json={
                 "model": "gpt-4o-mini",
                 "messages": [{"role": "user", "content": prompt}],
@@ -229,11 +239,11 @@ Home Run Plays:
         )
         if resp.status_code == 200:
             ai_summary = resp.json()['choices'][0]['message']['content'].strip()
-            print("AI summary generated successfully")
+            print("AI summary generated")
         else:
-            print(f"AI error {resp.status_code}: {resp.text[:200]}")
+            print(f"AI error {resp.status_code}: {resp.text[:300]}")
     except Exception as e:
-        print(f"AI request failed: {e}")
+        print(f"AI failed: {e}")
 
 # ── Build CSV ─────────────────────────────────────────────────────────────────
 fieldnames = ['Player', 'Team', 'G', 'AB', 'H', 'AVG', 'HR', 'G Drought', 'AB Drought', 'As Of']
@@ -254,14 +264,17 @@ lines = [
 if ai_summary:
     lines += ["📰 Yesterday's Recap", "─" * 40, ai_summary, ""]
 
-if game_summaries:
-    lines += [f"📊 Final Scores — {yesterday_display}", "─" * 40] + game_summaries + [""]
-
-if all_homers:
-    lines += [f"💥 Home Runs — {yesterday_display}", "─" * 40] + all_homers + [""]
-
-if not game_summaries:
-    lines += [f"No games played on {yesterday_display}."]
+if games_data:
+    lines += [f"📊 Final Scores & Home Runs — {yesterday_display}", "─" * 40]
+    for g in games_data:
+        lines.append(g['score_line'])
+        if g['homers']:
+            lines += g['homers']
+        else:
+            lines.append("  No home runs")
+        lines.append("")
+else:
+    lines += [f"No games played on {yesterday_display}.", ""]
 
 email_body = '\n'.join(lines)
 
