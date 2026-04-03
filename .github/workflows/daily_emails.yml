@@ -2,9 +2,10 @@ name: Daily Sports Emails
 
 on:
   schedule:
-    # 8:00 AM ET = 12:00 PM UTC (13:00 UTC during EDT)
+    # 8:00 AM ET (EDT = UTC-4, so 12:00 UTC)
+    # During EST (UTC-5) this runs at 7am ET — adjust to 13:00 UTC in winter
     - cron: '0 12 * * *'
-  workflow_dispatch: # allows manual trigger from GitHub
+  workflow_dispatch: # allows manual trigger from GitHub Actions tab
 
 jobs:
   send-mlb:
@@ -26,6 +27,7 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          AI_TOKEN: ${{ secrets.AI_TOKEN }}
         run: python scripts/send_mlb.py
 
   send-nhl:
@@ -47,4 +49,5 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          AI_TOKEN: ${{ secrets.AI_TOKEN }}
         run: python scripts/send_nhl.py
