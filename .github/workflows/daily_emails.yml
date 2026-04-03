@@ -2,9 +2,9 @@ name: Daily Sports Emails
 
 on:
   schedule:
-    # 8:00 AM ET (EDT = UTC-4, so 12:00 UTC)
-    # During EST (UTC-5) this runs at 7am ET — adjust to 13:00 UTC in winter
-    - cron: '0 12 * * *'
+    # 6:00 AM ET (EDT = UTC-4, so 10:00 UTC)
+    # During EST (UTC-5) this runs at 5am ET — acceptable buffer
+    - cron: '0 10 * * *'
   workflow_dispatch: # allows manual trigger from GitHub Actions tab
 
 jobs:
