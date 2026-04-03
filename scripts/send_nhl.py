@@ -37,11 +37,23 @@ def fetch(url, retries=3):
     return None
 
 # ── Build roster index (name -> id, team) ─────────────────────────────────────
+# ── Build roster index using ESPN teams list (no hardcoded IDs) ───────────────
 print("Building NHL roster index...")
 roster_index = {}
-NHL_TEAM_IDS = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,
-                21,22,23,24,25,26,27,28,29,30,37,38,39,40]
-for tid in NHL_TEAM_IDS:
+
+# Fetch all NHL teams dynamically
+teams_data = fetch("https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams?limit=40")
+team_list = []
+if teams_data:
+    for t in (teams_data.get('sports', [{}])[0].get('leagues', [{}])[0].get('teams', [])):
+        team = t.get('team', {})
+        tid = team.get('id')
+        if tid:
+            team_list.append(tid)
+
+print(f"Found {len(team_list)} NHL teams")
+
+for tid in team_list:
     d = fetch(f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams/{tid}/roster")
     if not d:
         continue
