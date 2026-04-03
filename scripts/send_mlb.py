@@ -51,9 +51,9 @@ for tid in range(1, 31):
     time.sleep(0.1)
 print(f"Roster index: {len(roster_index)} players")
 
-# Known ESPN IDs for players who may not appear in standard roster endpoint
+# Known ESPN IDs for two-way players and edge cases
 KNOWN_IDS = {
-    'shohei ohtani': ('39832', 'LAD'),
+    'shohei ohtani': ('39832', 'LAD'),  # two-way player — batting gamelog via ?category=batting
 }
 
 def get_player_meta(entry):
@@ -213,7 +213,7 @@ for p in players:
     if not pid:
         print(f"  SKIP {name}: no ID")
         continue
-    url  = f"https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/{pid}/gamelog?season={SEASON}"
+    url  = f"https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/{pid}/gamelog?season={SEASON}&category=batting"
     data = fetch(url)
     if not data:
         print(f"  SKIP {name}: no data from API (ID:{pid})")
