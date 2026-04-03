@@ -308,7 +308,7 @@ html_parts.append(f"<h1>🏒 NHL Stats — {today}</h1>")
 html_parts.append(f'<p class="subtitle">{len(rows)} players tracked &bull; CSV attached, sorted by G Drought</p>')
 
 if ai_summary:
-    html_parts.append('<h2>📰 Yesterday's Recap</h2>')
+    html_parts.append("<h2>📰 Yesterday's Recap</h2>")
     html_parts.append(f'<div class="recap">{ai_summary}</div>')
 
 if games_data:
