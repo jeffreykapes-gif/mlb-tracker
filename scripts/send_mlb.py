@@ -119,6 +119,7 @@ yesterday_display = (date.today() - timedelta(days=1)).strftime('%B %d, %Y')
 
 print(f"Fetching scores for {yesterday}...")
 scores_data = fetch(f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={yesterday}")
+print(f"Scoreboard response: {type(scores_data)} | events count: {len(scores_data.get('events', [])) if scores_data else 'None - API call failed'}")
 
 game_summaries = []
 game_ids = []
