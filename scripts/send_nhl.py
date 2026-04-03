@@ -36,24 +36,19 @@ def fetch(url, retries=3):
             time.sleep(2)
     return None
 
-# ── Build roster index (name -> id, team) ─────────────────────────────────────
-# ── Build roster index using ESPN teams list (no hardcoded IDs) ───────────────
+# ── Build NHL roster index dynamically ───────────────────────────────────────
 print("Building NHL roster index...")
 roster_index = {}
-
-# Fetch all NHL teams dynamically
 teams_data = fetch("https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams?limit=40")
-team_list = []
+team_ids = []
 if teams_data:
     for t in (teams_data.get('sports', [{}])[0].get('leagues', [{}])[0].get('teams', [])):
-        team = t.get('team', {})
-        tid = team.get('id')
+        tid = t.get('team', {}).get('id')
         if tid:
-            team_list.append(tid)
+            team_ids.append(tid)
+print(f"Found {len(team_ids)} NHL teams")
 
-print(f"Found {len(team_list)} NHL teams")
-
-for tid in team_list:
+for tid in team_ids:
     d = fetch(f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams/{tid}/roster")
     if not d:
         continue
@@ -62,42 +57,34 @@ for tid in team_list:
         for p in (group.get('items') or []):
             if p.get('fullName') and p.get('id'):
                 roster_index[p['fullName'].lower()] = {
-                    'id': str(p['id']),
-                    'name': p['fullName'],
-                    'team': team_abbr,
-                    'jersey': str(p.get('jersey', ''))
+                    'id': str(p['id']), 'name': p['fullName'],
+                    'team': team_abbr, 'jersey': str(p.get('jersey', ''))
                 }
     time.sleep(0.1)
-print(f"Roster index built: {len(roster_index)} players")
+print(f"Roster index: {len(roster_index)} players")
 
 def get_player_meta(entry):
     key = entry.get('name', '').lower()
     if key in roster_index:
         m = roster_index[key]
         return m['id'], m['team'], m.get('jersey', '')
-    matches = [v for k, v in roster_index.items() if entry.get('name', '').lower() in k]
-    if matches:
-        return matches[0]['id'], matches[0]['team'], matches[0].get('jersey', '')
+    for k, v in roster_index.items():
+        if entry.get('name', '').lower() in k:
+            return v['id'], v['team'], v.get('jersey', '')
     return entry.get('id'), entry.get('team', ''), entry.get('jersey', '')
 
 def parse_toi(raw):
-    if not raw:
-        return 0
+    if not raw: return 0
     s = str(raw)
     parts = s.split(':')
     if len(parts) == 2:
-        try:
-            return int(parts[0]) * 60 + int(parts[1])
-        except:
-            pass
-    try:
-        return int(float(s))
-    except:
-        return 0
+        try: return int(parts[0]) * 60 + int(parts[1])
+        except: pass
+    try: return int(float(s))
+    except: return 0
 
 def fmt_toi(secs):
-    if not secs:
-        return '—'
+    if not secs: return '—'
     return f"{secs // 60}:{str(secs % 60).zfill(2)}"
 
 def parse_gamelog(data, team_fallback=''):
@@ -105,18 +92,14 @@ def parse_gamelog(data, team_fallback=''):
     g_idx   = next((i for i, n in enumerate(names) if n == 'goals'), -1)
     s_idx   = next((i for i, n in enumerate(names) if n == 'shotsTotal'), -1)
     toi_idx = next((i for i, n in enumerate(names) if n == 'timeOnIcePerGame'), -1)
-
-    if g_idx < 0:
-        return None
-
+    if g_idx < 0: return None
     events_meta = data.get('events', {})
     games = []
     for st in (data.get('seasonTypes') or []):
         for cat in (st.get('categories') or []):
             for ev in (cat.get('events') or []):
                 stats = ev.get('stats', [])
-                if not stats:
-                    continue
+                if not stats: continue
                 meta = events_meta.get(ev.get('eventId'), {})
                 games.append({
                     'date':  meta.get('gameDate', ''),
@@ -124,36 +107,31 @@ def parse_gamelog(data, team_fallback=''):
                     'shots': int(stats[s_idx] or 0) if s_idx >= 0 else 0,
                     'toi':   parse_toi(stats[toi_idx]) if toi_idx >= 0 else 0,
                 })
-
     games.sort(key=lambda g: g['date'])
     total_goals = sum(g['goals'] for g in games)
     total_shots = sum(g['shots'] for g in games)
-
     g_drought = shot_drought = 0
     for g in reversed(games):
-        if g['goals'] > 0:
-            break
+        if g['goals'] > 0: break
         g_drought += 1
         shot_drought += g['shots']
-
     last10  = [g for g in games[-10:] if g['toi'] > 0]
     avg_toi = round(sum(g['toi'] for g in last10) / len(last10)) if last10 else None
-    team    = (data.get('seasonTypes') or [{}])[0].get('displayTeam', '') or team_fallback
-
+    team = (data.get('seasonTypes') or [{}])[0].get('displayTeam', '') or team_fallback
     return {
         'G': len(games), 'Goals': total_goals, 'Shots': total_shots,
         'G Drought': g_drought, 'Shots Since Goal': shot_drought,
         'Avg TOI (L10)': fmt_toi(avg_toi), 'Team': team,
     }
 
-# ── Yesterday's scores & goal scorers ────────────────────────────────────────
+# ── Yesterday's scores with full names and records ───────────────────────────
 yesterday = (date.today() - timedelta(days=1)).strftime('%Y%m%d')
 yesterday_display = (date.today() - timedelta(days=1)).strftime('%B %d, %Y')
 
-print(f"Fetching yesterday's NHL scores ({yesterday})...")
+print(f"Fetching NHL scores for {yesterday}...")
 scores_data = fetch(f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates={yesterday}")
 
-game_summaries = []
+games_data = []  # list of {'score_line': str, 'goals': [str]}
 all_goals = []
 
 if scores_data:
@@ -165,25 +143,44 @@ if scores_data:
         home = next((c for c in competitors if c.get('homeAway') == 'home'), competitors[0])
         away = next((c for c in competitors if c.get('homeAway') == 'away'), competitors[1])
         status = event.get('status', {}).get('type', {}).get('description', '')
+
+        home_name  = home.get('team', {}).get('displayName', home.get('team', {}).get('abbreviation', '?'))
+        away_name  = away.get('team', {}).get('displayName', away.get('team', {}).get('abbreviation', '?'))
+        home_score = home.get('score', '?')
+        away_score = away.get('score', '?')
+
+        home_rec = home.get('records', [{}])[0].get('summary', '') if home.get('records') else ''
+        away_rec = away.get('records', [{}])[0].get('summary', '') if away.get('records') else ''
+        if home_rec: home_name = f"{home_name} ({home_rec})"
+        if away_rec: away_name = f"{away_name} ({away_rec})"
+
+        note = ''
+        status_detail = event.get('status', {}).get('type', {}).get('shortDetail', '')
+        if 'OT' in status_detail: note = ' (OT)'
+        elif 'SO' in status_detail: note = ' (SO)'
+
         if 'final' in status.lower():
-            game_summaries.append(
-                f"{away.get('team',{}).get('abbreviation','?')} {away.get('score','?')}, "
-                f"{home.get('team',{}).get('abbreviation','?')} {home.get('score','?')}"
-            )
+            score_line = f"{away_name} {away_score}, {home_name} {home_score}{note}"
+            game_goals = []
 
-        # Get goal scorers from scoring summary
-        event_id = event.get('id')
-        if event_id and 'final' in status.lower():
-            box = fetch(f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={event_id}")
-            if box:
-                for play in (box.get('scoringPlays') or []):
-                    text = play.get('text', '')
-                    team_abbr = play.get('team', {}).get('abbreviation', '')
-                    period = play.get('period', {}).get('displayValue', '')
-                    if text:
-                        all_goals.append(f"{team_abbr} — {text} ({period})")
-            time.sleep(0.15)
+            event_id = event.get('id')
+            if event_id:
+                box = fetch(f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={event_id}")
+                if box:
+                    for play in (box.get('scoringPlays') or []):
+                        text = play.get('text', '')
+                        team_abbr = play.get('team', {}).get('abbreviation', '')
+                        period = play.get('period', {}).get('displayValue', '')
+                        clock = play.get('clock', {}).get('displayValue', '')
+                        if text:
+                            goal_line = f"  🥅 {team_abbr} — {text} ({period}, {clock})"
+                            game_goals.append(goal_line)
+                            all_goals.append(f"{team_abbr} — {text} ({period}, {clock})")
+                time.sleep(0.15)
 
+            games_data.append({'score_line': score_line, 'goals': game_goals})
+
+game_summaries = [g['score_line'] for g in games_data]
 print(f"Found {len(game_summaries)} games, {len(all_goals)} goals")
 
 # ── Fetch tracked player stats ────────────────────────────────────────────────
@@ -196,7 +193,7 @@ for p in players:
     if not pid:
         print(f"  Skipping {name} (no ID)")
         continue
-    print(f"  Fetching {name} (ID:{pid}, Team:{team})...")
+    print(f"  Fetching {name}...")
     url = f"https://site.web.api.espn.com/apis/common/v3/sports/hockey/nhl/athletes/{pid}/gamelog?season={SEASON}"
     data = fetch(url)
     if not data:
@@ -209,15 +206,15 @@ for p in players:
     rows.append({'Player': name, 'Jersey': f"#{jersey}" if jersey else '', **stats, 'As Of': today})
     time.sleep(0.15)
 
-print(f"Got stats for {len(rows)} / {len(players)} players")
+print(f"Got stats for {len(rows)} players")
 
 # ── AI Summary ────────────────────────────────────────────────────────────────
 AI_TOKEN = os.environ.get('AI_TOKEN', '')
 ai_summary = ''
 
-if AI_TOKEN:
+if AI_TOKEN and (game_summaries or all_goals):
     scores_text = '\n'.join(game_summaries) if game_summaries else 'No completed games.'
-    goals_text  = '\n'.join(all_goals[:30]) if all_goals else 'No goal data available.'
+    goals_text  = '\n'.join(all_goals[:30]) if all_goals else 'No goal data.'
 
     prompt = f"""You are an NHL analyst. Write a short, engaging 3-4 sentence summary of yesterday's NHL action ({yesterday_display}). Mention notable scores, standout goal scorers, and interesting storylines. Keep it conversational and exciting.
 
@@ -230,10 +227,7 @@ Goals Scored:
     try:
         resp = requests.post(
             "https://models.inference.ai.azure.com/chat/completions",
-            headers={
-                "Authorization": f"Bearer {AI_TOKEN}",
-                "Content-Type": "application/json"
-            },
+            headers={"Authorization": f"Bearer {AI_TOKEN}", "Content-Type": "application/json"},
             json={
                 "model": "gpt-4o-mini",
                 "messages": [{"role": "user", "content": prompt}],
@@ -244,11 +238,11 @@ Goals Scored:
         )
         if resp.status_code == 200:
             ai_summary = resp.json()['choices'][0]['message']['content'].strip()
-            print("AI summary generated successfully")
+            print("AI summary generated")
         else:
-            print(f"AI error {resp.status_code}: {resp.text[:200]}")
+            print(f"AI error {resp.status_code}: {resp.text[:300]}")
     except Exception as e:
-        print(f"AI request failed: {e}")
+        print(f"AI failed: {e}")
 
 # ── Build CSV ─────────────────────────────────────────────────────────────────
 fieldnames = ['Player', 'Jersey', 'Team', 'G', 'Goals', 'Shots', 'G Drought', 'Shots Since Goal', 'Avg TOI (L10)', 'As Of']
@@ -269,14 +263,17 @@ lines = [
 if ai_summary:
     lines += ["📰 Yesterday's Recap", "─" * 40, ai_summary, ""]
 
-if game_summaries:
-    lines += [f"📊 Final Scores — {yesterday_display}", "─" * 40] + game_summaries + [""]
-
-if all_goals:
-    lines += [f"🥅 Goals Scored — {yesterday_display}", "─" * 40] + all_goals + [""]
-
-if not game_summaries:
-    lines += [f"No games played on {yesterday_display}."]
+if games_data:
+    lines += [f"📊 Final Scores & Goal Scorers — {yesterday_display}", "─" * 40]
+    for g in games_data:
+        lines.append(g['score_line'])
+        if g['goals']:
+            lines += g['goals']
+        else:
+            lines.append("  No scoring play data available")
+        lines.append("")
+else:
+    lines += [f"No games played on {yesterday_display}.", ""]
 
 email_body = '\n'.join(lines)
 
