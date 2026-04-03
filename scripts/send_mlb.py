@@ -145,6 +145,9 @@ if scores_data:
 
 game_summaries = [g['score_line'] for g in games_data]
 print(f"Found {len(game_summaries)} completed games")
+print(f"games_data length: {len(games_data)}")
+if not games_data:
+    print(f"WARNING: No games_data — scoreboard response keys: {list(scores_data.keys()) if scores_data else 'None'}")
 
 # ── Get home runs using MLB Stats API, grouped by game ───────────────────────
 print("Fetching home runs via MLB Stats API...")
@@ -183,6 +186,8 @@ if schedule:
             time.sleep(0.1)
 
 print(f"Found {len(all_homers)} home runs")
+for g in games_data:
+    print(f"  Game: {g['score_line']} | HRs: {len(g['homers'])}")
 
 # ── Fetch tracked player stats ────────────────────────────────────────────────
 today = date.today().isoformat()
@@ -299,4 +304,6 @@ with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
     server.login(GMAIL_USER, GMAIL_PASS)
     server.sendmail(GMAIL_USER, TO_EMAIL, msg.as_string())
 
+print(f"Email body preview (first 500 chars):")
+print(email_body[:500])
 print(f"✓ MLB email sent to {TO_EMAIL}")
