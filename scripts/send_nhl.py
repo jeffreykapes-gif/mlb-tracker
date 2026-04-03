@@ -130,6 +130,7 @@ yesterday_display = (date.today() - timedelta(days=1)).strftime('%B %d, %Y')
 
 print(f"Fetching NHL scores for {yesterday}...")
 scores_data = fetch(f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates={yesterday}")
+print(f"Scoreboard response: {type(scores_data)} | events: {len(scores_data.get('events', [])) if scores_data else 'None - API failed'}")
 
 games_data = []  # list of {'score_line': str, 'goals': [str]}
 all_goals = []
@@ -159,7 +160,9 @@ if scores_data:
         if 'OT' in status_detail: note = ' (OT)'
         elif 'SO' in status_detail: note = ' (SO)'
 
-        if 'final' in status.lower():
+        is_final = any(x in status.lower() for x in ['final', 'completed', 'complete'])
+        print(f"  Game: {away.get('team',{}).get('abbreviation','?')} vs {home.get('team',{}).get('abbreviation','?')} | Status: '{status}' | Final: {is_final}")
+        if is_final:
             score_line = f"{away_name} {away_score}, {home_name} {home_score}{note}"
             game_goals = []
 
@@ -181,10 +184,10 @@ if scores_data:
             games_data.append({'score_line': score_line, 'goals': game_goals})
 
 game_summaries = [g['score_line'] for g in games_data]
-print(f"Found {len(game_summaries)} games, {len(all_goals)} goals")
-print(f"games_data length: {len(games_data)}")
-if not games_data:
-    print(f"WARNING: No games_data — scoreboard response keys: {list(scores_data.keys()) if scores_data else 'None'}")
+print(f"Found {len(game_summaries)} completed games out of {len(scores_data.get('events', []) if scores_data else [])} total")
+if not games_data and scores_data:
+    for ev in (scores_data.get('events') or [])[:3]:
+        print(f"  Raw status sample: {ev.get('status', {})}")
 for g in games_data:
     print(f"  Game: {g['score_line']} | Goals: {len(g['goals'])}")
 
