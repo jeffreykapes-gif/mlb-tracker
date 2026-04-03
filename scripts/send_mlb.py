@@ -146,16 +146,21 @@ if scores_data:
         if home_rec: home_name = f"{home_name} ({home_rec})"
         if away_rec: away_name = f"{away_name} ({away_rec})"
 
-        if 'final' in status.lower():
+        # ESPN uses various status values - check all
+        is_final = any(x in status.lower() for x in ['final', 'completed', 'complete'])
+        print(f"  Game: {away.get('team',{}).get('abbreviation','?')} vs {home.get('team',{}).get('abbreviation','?')} | Status: '{status}' | Final: {is_final}")
+        if is_final:
             score_line = f"{away_name} {away_score}, {home_name} {home_score}"
             game_ids.append(event.get('id'))
             games_data.append({'score_line': score_line, 'homers': [], 'mlb_away': away.get('team',{}).get('abbreviation',''), 'mlb_home': home.get('team',{}).get('abbreviation','')})
 
 game_summaries = [g['score_line'] for g in games_data]
-print(f"Found {len(game_summaries)} completed games")
-print(f"games_data length: {len(games_data)}")
-if not games_data:
-    print(f"WARNING: No games_data — scoreboard response keys: {list(scores_data.keys()) if scores_data else 'None'}")
+print(f"Found {len(game_summaries)} completed games out of {len(scores_data.get('events', []))} total events")
+if not games_data and scores_data:
+    # Show raw status values to diagnose
+    for ev in (scores_data.get('events') or [])[:3]:
+        raw_status = ev.get('status', {})
+        print(f"  Raw status sample: {raw_status}")
 
 # ── Get home runs using MLB Stats API, grouped by game ───────────────────────
 print("Fetching home runs via MLB Stats API...")
