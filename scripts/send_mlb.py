@@ -58,10 +58,18 @@ def get_player_meta(entry):
     if key in roster_index:
         m = roster_index[key]
         return m['id'], m['team']
+    # Try partial match both ways
     for k, v in roster_index.items():
-        if entry.get('name', '').lower() in k:
+        if key in k or k in key:
+            print(f"  Partial match: '{entry.get('name')}' -> '{v['name']}'")
             return v['id'], v['team']
-    return entry.get('id'), entry.get('team', '')
+    # Fall back to Firebase ID — player may be on DL or listed differently
+    fb_id = entry.get('id')
+    if fb_id:
+        print(f"  Falling back to Firebase ID {fb_id} for '{entry.get('name')}'")
+    else:
+        print(f"  ERROR: No ID at all for '{entry.get('name')}' — skipping")
+    return fb_id, entry.get('team', '')
 
 def parse_gamelog(data, team_fallback=''):
     names = [str(n) for n in (data.get('names') or [])]
