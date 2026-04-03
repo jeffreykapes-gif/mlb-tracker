@@ -176,10 +176,19 @@ if scores_data:
                     if nhl_sched:
                         away_abbr = away.get('team', {}).get('abbreviation', '')
                         home_abbr = home.get('team', {}).get('abbreviation', '')
+                        # ESPN <-> NHL API abbreviation map
+                        abbr_map = {
+                            'NJ': 'NJD', 'TB': 'TBL', 'LA': 'LAK', 'SJ': 'SJS',
+                            'CLB': 'CBJ', 'NAS': 'NSH', 'MON': 'MTL', 'WIN': 'WPG',
+                            'ANH': 'ANA', 'VEG': 'VGK', 'UTA': 'UTAH',
+                        }
+                        def to_nhl(abbr):
+                            return abbr_map.get(abbr, abbr)
+
                         for g in (nhl_sched.get('games') or []):
                             g_away = g.get('awayTeam', {}).get('abbrev', '')
                             g_home = g.get('homeTeam', {}).get('abbrev', '')
-                            if g_away == away_abbr and g_home == home_abbr:
+                            if g_away == to_nhl(away_abbr) and g_home == to_nhl(home_abbr):
                                 nhl_game_id = g.get('id')
                                 pbp = fetch(f"https://api-web.nhle.com/v1/gamecenter/{nhl_game_id}/play-by-play")
                                 if pbp:
