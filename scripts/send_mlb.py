@@ -37,19 +37,26 @@ def fetch(url, retries=3):
     return None
 
 # ── Build roster index ────────────────────────────────────────────────────────
-print("Building roster index...")
+print("Building roster index (active + IL)...")
 roster_index = {}
 for tid in range(1, 31):
-    d = fetch(f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams/{tid}/roster?season={SEASON}")
-    if not d:
-        continue
-    team_abbr = (d.get('team') or {}).get('abbreviation', '')
-    for group in (d.get('athletes') or []):
-        for p in (group.get('items') or []):
-            if p.get('fullName') and p.get('id'):
-                roster_index[p['fullName'].lower()] = {'id': str(p['id']), 'name': p['fullName'], 'team': team_abbr}
+    for roster_type in ['roster', 'injuries']:
+        d = fetch(f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams/{tid}/{roster_type}?season={SEASON}")
+        if not d:
+            continue
+        team_abbr = (d.get('team') or {}).get('abbreviation', '')
+        # Handle both roster and injuries response formats
+        athletes = d.get('athletes') or d.get('injuries') or []
+        for group in athletes:
+            items = group.get('items') or [group] if isinstance(group, dict) else []
+            for p in items:
+                athlete = p.get('athlete', p)  # injuries wrap athlete in 'athlete' key
+                if athlete.get('fullName') and athlete.get('id'):
+                    roster_index[athlete['fullName'].lower()] = {
+                        'id': str(athlete['id']), 'name': athlete['fullName'], 'team': team_abbr
+                    }
     time.sleep(0.1)
-print(f"Roster index: {len(roster_index)} players")
+print(f"Roster index: {len(roster_index)} players (including IL)")
 
 # Known ESPN IDs for two-way players and edge cases
 KNOWN_IDS = {
