@@ -63,9 +63,26 @@ KNOWN_IDS = {
     'shohei ohtani': ('39832', 'LAD'),  # two-way player — batting gamelog via ?category=batting
 }
 
+def search_espn_player(name):
+    """Search ESPN for a player — finds IL players not in active roster."""
+    try:
+        url = f"https://site.web.api.espn.com/apis/search/v2?limit=5&query={requests.utils.quote(name)}&sport=baseball&league=mlb&type=player"
+        data = fetch(url)
+        if data:
+            for result in (data.get('results') or []):
+                for item in (result.get('contents') or []):
+                    pid   = item.get('id') or item.get('athleteId')
+                    pname = item.get('displayName') or item.get('name')
+                    team  = item.get('teamShortName') or ''
+                    if pid and pname:
+                        print(f"  ESPN search found: {pname} ({team}) ID:{pid}")
+                        return str(pid), team
+    except Exception as e:
+        print(f"  ESPN search error: {e}")
+    return None, ''
+
 def get_player_meta(entry):
     key = entry.get('name', '').lower()
-    # Check known IDs first
     if key in KNOWN_IDS:
         known_id, known_team = KNOWN_IDS[key]
         print(f"  Using known ID for '{entry.get('name')}': {known_id} ({known_team})")
@@ -79,7 +96,13 @@ def get_player_meta(entry):
     fb_id = entry.get('id')
     if fb_id:
         print(f"  No roster match for '{entry.get('name')}' — using Firebase ID {fb_id}")
-    return fb_id, entry.get('team', '')
+        return fb_id, entry.get('team', '')
+    # Try ESPN search for IL players
+    sid, steam = search_espn_player(entry.get('name', ''))
+    if sid:
+        return sid, steam
+    print(f"  ERROR: No ID for '{entry.get('name')}' — skipping")
+    return None, 
 
 def parse_gamelog(data, team_fallback=''):
     names = [str(n) for n in (data.get('names') or [])]
