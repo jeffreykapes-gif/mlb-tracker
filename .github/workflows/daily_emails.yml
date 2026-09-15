@@ -2,7 +2,6 @@ name: Daily Sports Emails
 
 on:
   schedule:
-    # 6:00 AM ET (EDT = UTC-4, so 10:00 UTC)
     - cron: '0 10 * * *'
   workflow_dispatch:
 
@@ -14,12 +13,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
+
       - name: Install dependencies
         run: pip install requests firebase-admin
+
+      - name: Show script version
+        run: head -5 scripts/send_mlb.py
+
       - name: Send MLB email
         env:
           FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
@@ -33,12 +42,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
+
       - name: Install dependencies
         run: pip install requests firebase-admin
+
+      - name: Show script version
+        run: head -5 scripts/send_nhl.py
+
       - name: Send NHL email
         env:
           FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
