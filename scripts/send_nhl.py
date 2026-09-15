@@ -37,36 +37,13 @@ def fetch(url, retries=3):
     return None
 
 # ── Build roster index dynamically ───────────────────────────────────────────
-print("Building NHL roster index...")
+# Skip ESPN roster index — ESPN blocks this endpoint from GitHub Actions
+# All players use Firebase IDs directly
 roster_index = {}
-teams_data = fetch("https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams?limit=40")
-team_ids = []
-if teams_data:
-    for t in (teams_data.get('sports', [{}])[0].get('leagues', [{}])[0].get('teams', [])):
-        tid = t.get('team', {}).get('id')
-        if tid:
-            team_ids.append(tid)
-print(f"Found {len(team_ids)} NHL teams")
-for tid in team_ids:
-    d = fetch(f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams/{tid}/roster")
-    if not d:
-        continue
-    team_abbr = (d.get('team') or {}).get('abbreviation', '')
-    for group in (d.get('athletes') or []):
-        for p in (group.get('items') or []):
-            if p.get('fullName') and p.get('id'):
-                roster_index[p['fullName'].lower()] = {'id': str(p['id']), 'name': p['fullName'], 'team': team_abbr, 'jersey': str(p.get('jersey', ''))}
-    time.sleep(0.1)
-print(f"Roster index: {len(roster_index)} players")
+print("Skipping ESPN roster index (blocked) — using Firebase IDs directly")
 
 def get_player_meta(entry):
-    key = entry.get('name', '').lower()
-    if key in roster_index:
-        m = roster_index[key]
-        return m['id'], m['team'], m.get('jersey', '')
-    for k, v in roster_index.items():
-        if key in k or k in key:
-            return v['id'], v['team'], v.get('jersey', '')
+    # Roster index is empty (ESPN blocked), use Firebase data directly
     return entry.get('id'), entry.get('team', ''), entry.get('jersey', '')
 
 def parse_toi(raw):
@@ -116,112 +93,69 @@ yesterday = (date.today() - timedelta(days=1)).strftime('%Y%m%d')
 yesterday_display = (date.today() - timedelta(days=1)).strftime('%B %d, %Y')
 today = date.today().isoformat()
 
-print(f"Fetching NHL scores for {yesterday}...")
-scores_data = fetch(f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates={yesterday}")
-print(f"Scoreboard API result: {'OK - ' + str(len(scores_data.get('events',[]))) + ' events' if scores_data else 'FAILED - None returned'}")
+# Use official NHL API for scores — ESPN is blocked from GitHub Actions
+print(f"Fetching NHL scores via NHL API for {nhl_date}...")
+scores_data = None  # not used anymore
+nhl_score_data = fetch(f"https://api-web.nhle.com/v1/score/{nhl_date}")
+print(f"NHL score API: {'OK - ' + str(len(nhl_score_data.get('games',[]))) + ' games' if nhl_score_data else 'FAILED'}")
 
 games_data = []
 all_goals  = []
 
-# ESPN -> NHL API abbreviation map
-ESPN_TO_NHL = {
-    'NJ': 'NJD', 'TB': 'TBL', 'LA': 'LAK', 'SJ': 'SJS',
-    'CLB': 'CBJ', 'NAS': 'NSH', 'MON': 'MTL', 'WIN': 'WPG',
-    'ANH': 'ANA', 'VEG': 'VGK', 'UTA': 'UTAH', 'NSH': 'NSH',
-    'WSH': 'WSH', 'PHX': 'ARI',
-}
-
-# Fetch NHL schedule once upfront — build lookup: (away_abbr, home_abbr) -> game_id
-nhl_date = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
-nhl_sched = fetch(f"https://api-web.nhle.com/v1/score/{nhl_date}")
-nhl_game_lookup = {}
-if nhl_sched:
-    for g in (nhl_sched.get('games') or []):
-        g_away = g.get('awayTeam', {}).get('abbrev', '')
-        g_home = g.get('homeTeam', {}).get('abbrev', '')
-        nhl_game_lookup[(g_away, g_home)] = g.get('id')
-    print(f"NHL schedule loaded: {len(nhl_game_lookup)} games: {list(nhl_game_lookup.keys())}")
-
-def get_goals_for_game(event_id, away_espn, home_espn):
-    goals = []
-
-    # Try ESPN summary first
-    box = fetch(f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary?event={event_id}")
-    if box:
-        for play in (box.get('scoringPlays') or box.get('scoring') or []):
-            text      = play.get('text', '') or play.get('description', '')
-            team_abbr = play.get('team', {}).get('abbreviation', '')
-            period    = play.get('period', {}).get('displayValue', '') or str(play.get('period', ''))
-            clock     = play.get('clock', {}).get('displayValue', '') or play.get('clock', '')
-            if text:
-                goals.append(f"  🥅 {team_abbr} — {text} ({period}, {clock})")
-    if goals:
-        return goals
-
-    # Fall back to NHL API
-    away_nhl = ESPN_TO_NHL.get(away_espn, away_espn)
-    home_nhl = ESPN_TO_NHL.get(home_espn, home_espn)
-    nhl_game_id = nhl_game_lookup.get((away_nhl, home_nhl))
-    print(f"    ESPN empty -> NHL API: {away_espn}->{away_nhl} @ {home_espn}->{home_nhl} | id={nhl_game_id}")
-
-    # Fuzzy match if exact fails
-    if not nhl_game_id:
-        for (ga, gh), gid in nhl_game_lookup.items():
-            if (away_nhl in ga or ga in away_nhl or away_espn == ga) and (home_nhl in gh or gh in home_nhl or home_espn == gh):
-                nhl_game_id = gid
-                print(f"    Fuzzy match: ({ga},{gh}) -> {gid}")
-                break
-
-    if nhl_game_id:
-        pbp = fetch(f"https://api-web.nhle.com/v1/gamecenter/{nhl_game_id}/play-by-play")
-        if pbp:
-            roster   = {p.get('playerId'): f"{p.get('firstName',{}).get('default','')} {p.get('lastName',{}).get('default','')}".strip() for p in (pbp.get('rosterSpots') or [])}
-            team_map = {t.get('id'): t.get('abbrev','') for t in [pbp.get('homeTeam',{}), pbp.get('awayTeam',{})]}
-            for play in (pbp.get('plays') or []):
-                if play.get('typeDescKey') == 'goal':
-                    det    = play.get('details', {})
-                    sid    = det.get('scoringPlayerId')
-                    tid    = det.get('eventOwnerTeamId')
-                    period = play.get('periodDescriptor', {}).get('number', '')
-                    tstr   = play.get('timeInPeriod', '')
-                    goals.append(f"  🥅 {team_map.get(tid,'')} — {roster.get(sid, str(sid))} (P{period}, {tstr})")
-    return goals
-
-if scores_data:
-    for event in (scores_data.get('events') or []):
-        comps       = event.get('competitions', [{}])[0]
-        competitors = comps.get('competitors', [])
-        if len(competitors) < 2:
+# Use NHL API directly for scores and goals (ESPN blocked from GitHub Actions)
+if nhl_score_data:
+    for game in (nhl_score_data.get('games') or []):
+        game_state = game.get('gameState', '')
+        if game_state not in ('FINAL', 'OFF'):
             continue
-        home = next((c for c in competitors if c.get('homeAway') == 'home'), competitors[0])
-        away = next((c for c in competitors if c.get('homeAway') == 'away'), competitors[1])
 
-        status_name = event.get('status', {}).get('type', {}).get('name', '')
-        status_desc = event.get('status', {}).get('type', {}).get('description', '')
-        is_final    = 'STATUS_FINAL' in status_name or 'final' in status_desc.lower()
+        away_team  = game.get('awayTeam', {})
+        home_team  = game.get('homeTeam', {})
+        away_name  = away_team.get('name', {}).get('default', away_team.get('abbrev', '?'))
+        home_name  = home_team.get('name', {}).get('default', home_team.get('abbrev', '?'))
+        away_abbr  = away_team.get('abbrev', '')
+        home_abbr  = home_team.get('abbrev', '')
+        away_score = away_team.get('score', '?')
+        home_score = home_team.get('score', '?')
 
-        away_abbr = away.get('team', {}).get('abbreviation', '?')
-        home_abbr = home.get('team', {}).get('abbreviation', '?')
-        print(f"  {away_abbr} @ {home_abbr} | final={is_final}")
+        # Records
+        away_rec = f"{away_team.get('record', '')}" if away_team.get('record') else ''
+        home_rec = f"{home_team.get('record', '')}" if home_team.get('record') else ''
+        away_display = f"{away_name} ({away_rec})" if away_rec else away_name
+        home_display = f"{home_name} ({home_rec})" if home_rec else home_name
 
-        if is_final:
-            home_name = home.get('team', {}).get('displayName', home_abbr)
-            away_name = away.get('team', {}).get('displayName', away_abbr)
-            home_rec  = home.get('records', [{}])[0].get('summary', '') if home.get('records') else ''
-            away_rec  = away.get('records', [{}])[0].get('summary', '') if away.get('records') else ''
-            if home_rec: home_name = f"{home_name} ({home_rec})"
-            if away_rec: away_name = f"{away_name} ({away_rec})"
-            short_detail = event.get('status', {}).get('type', {}).get('shortDetail', '')
-            note       = ' (OT)' if 'OT' in short_detail else ' (SO)' if 'SO' in short_detail else ''
-            score_line = f"{away_name} {away.get('score','?')}, {home_name} {home.get('score','?')}{note}"
-            print(f"  -> {score_line}")
+        # OT/SO
+        period = game.get('periodDescriptor', {}).get('number', 3)
+        period_type = game.get('periodDescriptor', {}).get('periodType', '')
+        note = ' (OT)' if period == 4 else ' (SO)' if period_type == 'SO' or period > 4 else ''
 
-            game_goals = get_goals_for_game(event.get('id',''), away_abbr, home_abbr)
+        score_line = f"{away_display} {away_score}, {home_display} {home_score}{note}"
+        print(f"  Final: {score_line}")
+
+        # Get goals from play-by-play
+        game_id    = game.get('id')
+        game_goals = []
+        if game_id:
+            pbp = fetch(f"https://api-web.nhle.com/v1/gamecenter/{game_id}/play-by-play")
+            if pbp:
+                roster   = {p.get('playerId'): f"{p.get('firstName',{}).get('default','')} {p.get('lastName',{}).get('default','')}".strip() for p in (pbp.get('rosterSpots') or [])}
+                team_map = {t.get('id'): t.get('abbrev','') for t in [pbp.get('homeTeam',{}), pbp.get('awayTeam',{})]}
+                for play in (pbp.get('plays') or []):
+                    if play.get('typeDescKey') == 'goal':
+                        det    = play.get('details', {})
+                        sid    = det.get('scoringPlayerId')
+                        tid    = det.get('eventOwnerTeamId')
+                        pnum   = play.get('periodDescriptor', {}).get('number', '')
+                        tstr   = play.get('timeInPeriod', '')
+                        sname  = roster.get(sid, str(sid))
+                        tabbr  = team_map.get(tid, '')
+                        goal_line = f"  🥅 {tabbr} — {sname} (P{pnum}, {tstr})"
+                        game_goals.append(goal_line)
+                        all_goals.append(goal_line.strip())
             print(f"    Goals: {len(game_goals)}")
-            all_goals.extend(game_goals)
-            games_data.append({'score_line': score_line, 'goals': game_goals})
-            time.sleep(0.2)
-print(f"Total final games: {len(games_data)} | Total goals: {len(all_goals)}")
+            time.sleep(0.1)
+
+        games_data.append({'score_line': score_line, 'goals': game_goals})
 
 # ── Fetch tracked player stats ────────────────────────────────────────────────
 print("Fetching tracked player stats...")
@@ -244,29 +178,9 @@ for p in players:
     time.sleep(0.15)
 print(f"Got stats for {len(rows)} players")
 
-# ── AI Summary ────────────────────────────────────────────────────────────────
-AI_TOKEN   = os.environ.get('AI_TOKEN', '')
+# AI Summary skipped — GitHub Models endpoint unreachable from GitHub Actions
 ai_summary = ''
-if AI_TOKEN and (games_data or all_goals):
-    scores_text = '\n'.join(g['score_line'] for g in games_data) if games_data else 'No completed games.'
-    goals_text  = '\n'.join(all_goals[:30]) if all_goals else 'No goals.'
-    prompt = f"You are an NHL analyst. Write a short exciting 3-4 sentence summary of yesterday's NHL action ({yesterday_display}). Mention notable scores and goal scorers.\n\nScores:\n{scores_text}\n\nGoals:\n{goals_text}"
-    try:
-        resp = requests.post(
-            "https://models.inference.ai.azure.com/chat/completions",
-            headers={"Authorization": f"Bearer {AI_TOKEN}", "Content-Type": "application/json"},
-            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": prompt}], "max_tokens": 300},
-            timeout=30
-        )
-        if resp.status_code == 200:
-            ai_summary = resp.json()['choices'][0]['message']['content'].strip()
-            print("AI summary generated")
-        else:
-            print(f"AI error {resp.status_code}: {resp.text[:200]}")
-    except Exception as e:
-        print(f"AI failed: {e}")
-else:
-    print(f"Skipping AI: token={'yes' if AI_TOKEN else 'NO'}, games={len(games_data)}, goals={len(all_goals)}")
+print('AI summary skipped')
 
 # ── Build CSV ─────────────────────────────────────────────────────────────────
 fieldnames = ['Player', 'Jersey', 'Team', 'G', 'Goals', 'Shots', 'G Drought', 'Shots Since Goal', 'Avg TOI (L10)', 'As Of']
