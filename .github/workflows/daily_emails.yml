@@ -3,24 +3,23 @@ name: Daily Sports Emails
 on:
   schedule:
     # 6:00 AM ET (EDT = UTC-4, so 10:00 UTC)
-    # During EST (UTC-5) this runs at 5am ET — acceptable buffer
     - cron: '0 10 * * *'
-  workflow_dispatch: # allows manual trigger from GitHub Actions tab
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   send-mlb:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: pip install requests firebase-admin
-
       - name: Send MLB email
         env:
           FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
@@ -34,15 +33,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: pip install requests firebase-admin
-
       - name: Send NHL email
         env:
           FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
