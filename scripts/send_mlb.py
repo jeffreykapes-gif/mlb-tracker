@@ -37,30 +37,18 @@ def fetch(url, retries=3):
     return None
 
 # ── Build roster index ────────────────────────────────────────────────────────
-print("Building roster index (active + IL)...")
+# Skip ESPN roster index — ESPN blocks roster endpoint from GitHub Actions
+# All players use Firebase IDs directly; special cases handled in KNOWN_IDS
 roster_index = {}
-for tid in range(1, 31):
-    for roster_type in ['roster', 'injuries']:
-        d = fetch(f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams/{tid}/{roster_type}?season={SEASON}")
-        if not d:
-            continue
-        team_abbr = (d.get('team') or {}).get('abbreviation', '')
-        # Handle both roster and injuries response formats
-        athletes = d.get('athletes') or d.get('injuries') or []
-        for group in athletes:
-            items = group.get('items') or [group] if isinstance(group, dict) else []
-            for p in items:
-                athlete = p.get('athlete', p)  # injuries wrap athlete in 'athlete' key
-                if athlete.get('fullName') and athlete.get('id'):
-                    roster_index[athlete['fullName'].lower()] = {
-                        'id': str(athlete['id']), 'name': athlete['fullName'], 'team': team_abbr
-                    }
-    time.sleep(0.1)
-print(f"Roster index: {len(roster_index)} players (including IL)")
+print("Skipping ESPN roster index (blocked) — using Firebase IDs directly")
 
-# Known ESPN IDs for two-way players and edge cases
+# Known ESPN IDs — used for two-way players and anyone whose Firebase ID is wrong
 KNOWN_IDS = {
-    'shohei ohtani': ('39832', 'LAD'),  # two-way player — batting gamelog via ?category=batting
+    'shohei ohtani':  ('39832',  'LAD'),  # two-way player
+    'brent rooker':   ('39858',  'OAK'),
+    'yainer diaz':    ('42474',  'HOU'),
+    'mickey moniak':  ('36157',  'LAA'),
+    'addison barger': ('4872690','TOR'),
 }
 
 def search_espn_player(name):
@@ -140,97 +128,54 @@ yesterday_iso = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
 yesterday_display = (date.today() - timedelta(days=1)).strftime('%B %d, %Y')
 today = date.today().isoformat()
 
-print(f"Fetching MLB scores for {yesterday}...")
-scores_data = fetch(f"https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard?dates={yesterday}")
-print(f"Scoreboard API result: {'OK - ' + str(len(scores_data.get('events',[]))) + ' events' if scores_data else 'FAILED - None returned'}")
-
+# Use MLB Stats API for scores (ESPN scoreboard is blocked from GitHub Actions)
+print(f"Fetching MLB scores via MLB Stats API for {yesterday_iso}...")
 games_data = []
-
-if scores_data:
-    for event in (scores_data.get('events') or []):
-        comps   = event.get('competitions', [{}])[0]
-        competitors = comps.get('competitors', [])
-        if len(competitors) < 2:
-            continue
-        home = next((c for c in competitors if c.get('homeAway') == 'home'), competitors[0])
-        away = next((c for c in competitors if c.get('homeAway') == 'away'), competitors[1])
-
-        status_obj  = event.get('status', {})
-        status_type = status_obj.get('type', {})
-        status_name = status_type.get('name', '')
-        status_desc = status_type.get('description', '')
-        print(f"  Event: {away.get('team',{}).get('abbreviation','?')} @ {home.get('team',{}).get('abbreviation','?')} | status.type.name='{status_name}' | status.type.description='{status_desc}'")
-
-        is_final = 'STATUS_FINAL' in status_name or 'final' in status_desc.lower() or 'final' in status_name.lower()
-
-        if is_final:
-            home_name = home.get('team', {}).get('displayName', home.get('team', {}).get('abbreviation', '?'))
-            away_name = away.get('team', {}).get('displayName', away.get('team', {}).get('abbreviation', '?'))
-            home_rec  = home.get('records', [{}])[0].get('summary', '') if home.get('records') else ''
-            away_rec  = away.get('records', [{}])[0].get('summary', '') if away.get('records') else ''
-            if home_rec: home_name = f"{home_name} ({home_rec})"
-            if away_rec: away_name = f"{away_name} ({away_rec})"
-            score_line = f"{away_name} {away.get('score','?')}, {home_name} {home.get('score','?')}"
-            games_data.append({'score_line': score_line, 'homers': [], 'away': away.get('team',{}).get('abbreviation',''), 'home': home.get('team',{}).get('abbreviation','')})
-            print(f"  -> Added as final: {score_line}")
+scores_schedule = fetch(f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={yesterday_iso}&hydrate=linescore,team")
+if scores_schedule:
+    for date_entry in (scores_schedule.get('dates') or []):
+        for game in (date_entry.get('games') or []):
+            status = game.get('status', {}).get('detailedState', '')
+            if 'Final' not in status:
+                continue
+            away_team = game.get('teams', {}).get('away', {})
+            home_team = game.get('teams', {}).get('home', {})
+            away_name = away_team.get('team', {}).get('name', '?')
+            home_name = home_team.get('team', {}).get('name', '?')
+            away_abbr = away_team.get('team', {}).get('abbreviation', '')
+            home_abbr = home_team.get('team', {}).get('abbreviation', '')
+            away_score = away_team.get('score', '?')
+            home_score = home_team.get('score', '?')
+            away_rec = f"{away_team.get('leagueRecord',{}).get('wins',0)}-{away_team.get('leagueRecord',{}).get('losses',0)}"
+            home_rec = f"{home_team.get('leagueRecord',{}).get('wins',0)}-{home_team.get('leagueRecord',{}).get('losses',0)}"
+            score_line = f"{away_name} ({away_rec}) {away_score}, {home_name} ({home_rec}) {home_score}"
+            print(f"  Final: {score_line}")
+            games_data.append({'score_line': score_line, 'homers': [], 'away': away_abbr, 'home': home_abbr, 'game_pk': game.get('gamePk')})
 
 print(f"Total final games found: {len(games_data)}")
 
 # ── Home runs via MLB Stats API ───────────────────────────────────────────────
-print(f"Fetching home runs from MLB Stats API for {yesterday_iso}...")
-schedule = fetch(f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={yesterday_iso}&hydrate=linescore")
-if schedule:
-    dates = schedule.get('dates') or []
-    games_today = dates[0].get('games', []) if dates else []
-    print(f"MLB Stats API: OK - {len(games_today)} games")
-else:
-    print("MLB Stats API: FAILED - None returned")
-
+print(f"Fetching home runs for {yesterday_iso}...")
 all_homers = []
-if schedule:
-    # Build list of final games from MLB Stats API in order
-    mlb_final_games = []
-    for date_entry in (schedule.get('dates') or []):
-        for game in (date_entry.get('games') or []):
-            status = game.get('status', {}).get('detailedState', '')
-            if 'Final' in status:
-                mlb_final_games.append(game)
 
-    print(f"  MLB Stats API final games: {len(mlb_final_games)} | ESPN final games: {len(games_data)}")
-
-    for game in mlb_final_games:
-        game_pk   = game.get('gamePk')
-        away_team = game.get('teams', {}).get('away', {}).get('team', {})
-        home_team = game.get('teams', {}).get('home', {}).get('team', {})
-        away_name = away_team.get('name', '')
-        home_name = home_team.get('name', '')
-        away_abbr = away_team.get('abbreviation', '')
-        home_abbr = home_team.get('abbreviation', '')
-        print(f"  MLB game {game_pk}: {away_name}({away_abbr}) @ {home_name}({home_abbr})")
-        pbp = fetch(f"https://statsapi.mlb.com/api/v1/game/{game_pk}/playByPlay")
-        if not pbp:
-            print(f"    No PBP data")
-            continue
-        game_homers = []
-        for play in (pbp.get('allPlays') or []):
-            if play.get('result', {}).get('eventType') == 'home_run':
-                batter = play.get('matchup', {}).get('batter', {}).get('fullName', 'Unknown')
-                team   = play.get('offense', {}).get('team', {}).get('abbreviation', '')
-                desc   = play.get('result', {}).get('description', '')
-                game_homers.append(f"   💥 {batter} ({team}) — {desc}")
-                all_homers.append(f"{batter} ({team}) — {desc}")
-        print(f"    Found {len(game_homers)} HRs")
-        # Match to games_data by team name — more reliable than index
-        for g in games_data:
-            if away_abbr and away_abbr in g['score_line']:
-                g['homers'] = game_homers
-                print(f"    Matched to: {g['score_line']}")
-                break
-            elif away_name and away_name in g['score_line']:
-                g['homers'] = game_homers
-                print(f"    Matched to: {g['score_line']}")
-                break
-        time.sleep(0.1)
+for g in games_data:
+    game_pk = g.get('game_pk')
+    if not game_pk:
+        continue
+    pbp = fetch(f"https://statsapi.mlb.com/api/v1/game/{game_pk}/playByPlay")
+    if not pbp:
+        continue
+    game_homers = []
+    for play in (pbp.get('allPlays') or []):
+        if play.get('result', {}).get('eventType') == 'home_run':
+            batter = play.get('matchup', {}).get('batter', {}).get('fullName', 'Unknown')
+            team   = play.get('offense', {}).get('team', {}).get('abbreviation', '')
+            desc   = play.get('result', {}).get('description', '')
+            game_homers.append(f"   💥 {batter} ({team}) — {desc}")
+            all_homers.append(f"{batter} ({team}) — {desc}")
+    print(f"  {g['score_line'][:50]}... -> {len(game_homers)} HRs")
+    g['homers'] = game_homers
+    time.sleep(0.1)
 
 print(f"Total home runs: {len(all_homers)}")
 
@@ -259,29 +204,9 @@ for p in players:
     time.sleep(0.15)
 print(f"Got stats for {len(rows)} players")
 
-# ── AI Summary ────────────────────────────────────────────────────────────────
-AI_TOKEN  = os.environ.get('AI_TOKEN', '')
+# AI Summary skipped — GitHub Models endpoint unreachable from GitHub Actions
 ai_summary = ''
-if AI_TOKEN and (games_data or all_homers):
-    scores_text = '\n'.join(g['score_line'] for g in games_data) if games_data else 'No completed games.'
-    homers_text = '\n'.join(all_homers[:20]) if all_homers else 'No home runs.'
-    prompt = f"You are a baseball analyst. Write a short exciting 3-4 sentence summary of yesterday's MLB action ({yesterday_display}). Mention notable scores and home runs.\n\nScores:\n{scores_text}\n\nHome Runs:\n{homers_text}"
-    try:
-        resp = requests.post(
-            "https://models.inference.ai.azure.com/chat/completions",
-            headers={"Authorization": f"Bearer {AI_TOKEN}", "Content-Type": "application/json"},
-            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": prompt}], "max_tokens": 300},
-            timeout=30
-        )
-        if resp.status_code == 200:
-            ai_summary = resp.json()['choices'][0]['message']['content'].strip()
-            print("AI summary generated")
-        else:
-            print(f"AI error {resp.status_code}: {resp.text[:200]}")
-    except Exception as e:
-        print(f"AI failed: {e}")
-else:
-    print(f"Skipping AI: token={'yes' if AI_TOKEN else 'NO'}, games={len(games_data)}, homers={len(all_homers)}")
+print("AI summary skipped")
 
 # ── Build CSV ─────────────────────────────────────────────────────────────────
 fieldnames = ['Player', 'Team', 'G', 'AB', 'H', 'AVG', 'HR', 'G Drought', 'AB Drought', 'As Of']
