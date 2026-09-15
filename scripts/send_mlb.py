@@ -22,7 +22,7 @@ players = doc.to_dict().get('players', [])
 print(f"Loaded {len(players)} players from Firebase")
 
 SEASON = 2026
-HEADERS = {'User-Agent': 'Mozilla/5.0'}
+HEADERS = {'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache'}
 
 def fetch(url, retries=3):
     for i in range(retries):
@@ -188,7 +188,9 @@ for p in players:
     if not pid:
         print(f"  SKIP {name}: no ID")
         continue
-    url  = f"https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/{pid}/gamelog?season={SEASON}&category=batting"
+    import random
+    cache_bust = random.randint(100000, 999999)
+    url  = f"https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/{pid}/gamelog?season={SEASON}&category=batting&_={cache_bust}"
     data = fetch(url)
     if not data:
         print(f"  SKIP {name}: no data from API (ID:{pid})")
