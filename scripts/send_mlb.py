@@ -90,7 +90,7 @@ def get_player_meta(entry):
     if sid:
         return sid, steam
     print(f"  ERROR: No ID for '{entry.get('name')}' — skipping")
-    return None, 
+    return None, ''
 
 def parse_gamelog(data, team_fallback=''):
     names = [str(n) for n in (data.get('names') or [])]
