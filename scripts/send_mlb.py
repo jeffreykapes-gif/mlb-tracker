@@ -179,31 +179,104 @@ for g in games_data:
 
 print(f"Total home runs: {len(all_homers)}")
 
+# ── Build MLB Stats API player ID lookup ──────────────────────────────────────
+print("Building MLB Stats API player lookup...")
+mlb_id_cache = {}  # name.lower() -> mlb_id
+
+def get_mlb_id(name):
+    key = name.lower()
+    if key in mlb_id_cache:
+        return mlb_id_cache[key]
+    d = fetch(f"https://statsapi.mlb.com/api/v1/people/search?names={requests.utils.quote(name)}&sportId=1")
+    if d:
+        people = d.get('people') or []
+        if people:
+            mlb_id = people[0].get('id')
+            mlb_id_cache[key] = mlb_id
+            return mlb_id
+    mlb_id_cache[key] = None
+    return None
+
+def get_mlb_season_stats(mlb_id):
+    """Get season batting stats from MLB Stats API."""
+    d = fetch(f"https://statsapi.mlb.com/api/v1/people/{mlb_id}/stats?stats=season&season={SEASON}&sportId=1&group=hitting")
+    if not d:
+        return None
+    splits = (d.get('stats') or [{}])[0].get('splits') or []
+    if not splits:
+        return None
+    s = splits[0].get('stat', {})
+    team = splits[0].get('team', {}).get('abbreviation', '')
+    return {
+        'G': s.get('gamesPlayed', 0),
+        'AB': s.get('atBats', 0),
+        'H': s.get('hits', 0),
+        'AVG': s.get('avg', '.000'),
+        'HR': s.get('homeRuns', 0),
+        'Team': team
+    }
+
+def get_mlb_gamelog(mlb_id):
+    """Get game-by-game log to calculate drought."""
+    d = fetch(f"https://statsapi.mlb.com/api/v1/people/{mlb_id}/stats?stats=gameLog&season={SEASON}&sportId=1&group=hitting")
+    if not d:
+        return []
+    splits = (d.get('stats') or [{}])[0].get('splits') or []
+    games = []
+    for s in splits:
+        stat = s.get('stat', {})
+        games.append({
+            'date': s.get('date', ''),
+            'ab': stat.get('atBats', 0),
+            'hr': stat.get('homeRuns', 0)
+        })
+    games.sort(key=lambda g: g['date'])
+    return games
+
 # ── Fetch tracked player stats ────────────────────────────────────────────────
-print("Fetching tracked player stats...")
+print("Fetching tracked player stats via MLB Stats API...")
 rows = []
 for p in players:
     name = p.get('name', 'Unknown')
-    pid, team = get_player_meta(p)
-    if not pid:
-        print(f"  SKIP {name}: no ID")
+    _, team = get_player_meta(p)
+
+    # Look up MLB Stats API ID
+    mlb_id = get_mlb_id(name)
+    if not mlb_id:
+        print(f"  SKIP {name}: not found in MLB Stats API")
         continue
-    import random
-    cache_bust = random.randint(100000, 999999)
-    url  = f"https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/{pid}/gamelog?season={SEASON}&category=batting&_={cache_bust}"
-    data = fetch(url)
-    if not data:
-        print(f"  SKIP {name}: no data from API (ID:{pid})")
+
+    # Get season stats
+    season_stats = get_mlb_season_stats(mlb_id)
+    if not season_stats:
+        print(f"  SKIP {name}: no season stats")
         continue
-    stats = parse_gamelog(data, team_fallback=team)
-    if not stats:
-        names_returned = [str(n) for n in (data.get('names') or [])]
-        print(f"  SKIP {name}: parse failed. Columns: {names_returned}")
-        continue
-    if not stats.get('Team'):
-        stats['Team'] = team
-    rows.append({'Player': name, **stats, 'As Of': today})
-    time.sleep(0.15)
+
+    # Get gamelog for drought calculation
+    games = get_mlb_gamelog(mlb_id)
+    g_drought = ab_drought = 0
+    for g in reversed(games):
+        if g['hr'] > 0:
+            break
+        g_drought += 1
+        ab_drought += g['ab']
+
+    if not season_stats.get('Team'):
+        season_stats['Team'] = team
+
+    rows.append({
+        'Player': name,
+        'Team': season_stats['Team'],
+        'G': season_stats['G'],
+        'AB': season_stats['AB'],
+        'H': season_stats['H'],
+        'AVG': season_stats['AVG'],
+        'HR': season_stats['HR'],
+        'G Drought': g_drought,
+        'AB Drought': ab_drought,
+        'As Of': today
+    })
+    time.sleep(0.1)
 print(f"Got stats for {len(rows)} players")
 
 # AI Summary skipped — GitHub Models endpoint unreachable from GitHub Actions
