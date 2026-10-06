@@ -21,7 +21,7 @@ if not doc.exists:
 players = doc.to_dict().get('players', [])
 print(f"Loaded {len(players)} players from Firebase")
 
-SEASON = 2026
+SEASON = 2027
 HEADERS = {'User-Agent': 'Mozilla/5.0'}
 
 def fetch(url, retries=3):
