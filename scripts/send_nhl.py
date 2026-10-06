@@ -91,6 +91,7 @@ def parse_gamelog(data, team_fallback=''):
 # ── Yesterday's scores ────────────────────────────────────────────────────────
 yesterday = (date.today() - timedelta(days=1)).strftime('%Y%m%d')
 yesterday_display = (date.today() - timedelta(days=1)).strftime('%B %d, %Y')
+nhl_date = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
 today = date.today().isoformat()
 
 # Use official NHL API for scores — ESPN is blocked from GitHub Actions
